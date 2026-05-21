@@ -1,5 +1,6 @@
 services:
   qdrant:
+    profiles: [full]
     image: qdrant/qdrant:latest
     ports:
       - "55333:6333"
@@ -23,29 +24,34 @@ services:
     environment:
       - VAULT_PATH=/vault
       - QDRANT_URL=http://qdrant:6333
-      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-lm_studio}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - COLLECTION_NAME=${COLLECTION_NAME:-obsidian_vault}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      qdrant:
-        condition: service_healthy
 
   indexer:
+    profiles: [full]
     build: .
     command: uv run python indexer/main.py
     volumes:
       - ${VAULT_PATH}:/vault:ro
+      - ./indexer:/app/indexer
+      - ./shared:/app/shared
     environment:
       - VAULT_PATH=/vault
       - QDRANT_URL=http://qdrant:6333
-      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-lm_studio}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - COLLECTION_NAME=${COLLECTION_NAME:-obsidian_vault}
       - CHUNK_SIZE=${CHUNK_SIZE:-500}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
-      - EMBEDDING_DIM=${EMBEDDING_DIM:-768}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

@@ -2,12 +2,19 @@ import re
 
 from qdrant_client import QdrantClient
 
-from embedding import embed
+from shared.embedding import make_embedder
 
 
 def register(mcp, config):
     vault = config.vault_path
     qdrant = QdrantClient(url=config.qdrant_url)
+    embedder = make_embedder(
+        provider=config.embedding_provider,
+        model=config.embedding_model,
+        lm_studio_url=config.lm_studio_url,
+        openai_api_key=config.openai_api_key,
+        gemini_api_key=config.gemini_api_key,
+    )
 
     @mcp.tool()
     def fulltext_search(query: str, case_sensitive: bool = False) -> list[dict]:
@@ -55,25 +62,26 @@ def register(mcp, config):
 
     @mcp.tool()
     async def search_similar(query: str, n_results: int = 5, tag: str = "") -> list[dict]:
-        """Semantic similarity search using local embeddings (LM Studio + Qdrant).
+        """Semantic similarity search using embeddings (Qdrant).
 
         Falls back to fulltext_search automatically if the collection is empty
-        or LM Studio is unreachable.
+        or the embedding provider is unreachable.
 
         Args:
             query: Natural language query describing what you're looking for
             n_results: Number of results (default 5)
             tag: Optional Obsidian tag to filter (e.g. "project/work")
         """
+        collection = config.active_collection
         try:
-            info = qdrant.get_collection(config.collection_name)
+            info = qdrant.get_collection(collection)
             if (info.vectors_count or 0) == 0:
                 return _fallback_search(query, n_results)
         except Exception:
             return _fallback_search(query, n_results)
 
         try:
-            vector = await embed(query, config.lm_studio_url, config.embedding_model)
+            vector = await embedder.aembed_query(query)
         except Exception:
             return _fallback_search(query, n_results)
 
@@ -85,7 +93,7 @@ def register(mcp, config):
             )
 
         hits = qdrant.search(
-            collection_name=config.collection_name,
+            collection_name=collection,
             query_vector=vector,
             limit=n_results,
             query_filter=filter_condition,
@@ -105,12 +113,13 @@ def register(mcp, config):
     @mcp.tool()
     def indexing_status() -> dict:
         """Return how many note chunks are currently indexed in the vector database."""
+        collection = config.active_collection
         try:
-            info = qdrant.get_collection(config.collection_name)
+            info = qdrant.get_collection(collection)
             return {
-                "collection": config.collection_name,
+                "collection": collection,
                 "vectors_indexed": info.vectors_count,
                 "status": str(info.status),
             }
         except Exception as e:
-            return {"collection": config.collection_name, "error": str(e)}
+            return {"collection": collection, "error": str(e)}

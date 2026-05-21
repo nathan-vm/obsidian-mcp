@@ -26,10 +26,18 @@ class VaultHandler(FileSystemEventHandler):
             log.info("removed chunks for deleted note: %s", rel)
 
     def on_moved(self, event):
-        if not event.is_directory:
-            if event.src_path.endswith(".md"):
-                self.store.delete_note_chunks(
-                    str(Path(event.src_path).relative_to(self.vault_path))
-                )
-            if event.dest_path.endswith(".md"):
-                self.store.index_file(Path(event.dest_path), self.vault_path)
+        if event.is_directory:
+            return
+        src_md = event.src_path.endswith(".md")
+        dst_md = event.dest_path.endswith(".md")
+
+        if src_md and dst_md:
+            old = str(Path(event.src_path).relative_to(self.vault_path))
+            new = str(Path(event.dest_path).relative_to(self.vault_path))
+            self.store.move_note_chunks(old, new)
+        elif src_md:
+            self.store.delete_note_chunks(
+                str(Path(event.src_path).relative_to(self.vault_path))
+            )
+        elif dst_md:
+            self.store.index_file(Path(event.dest_path), self.vault_path)
