@@ -1,0 +1,54 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "55333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  obsidian-mcp:
+    build: .
+    command: uv run python obsidian-mcp/server.py
+    ports:
+      - "${MCP_PORT:-55000}:55000"
+    volumes:
+      - ${VAULT_PATH}:/vault
+    environment:
+      - VAULT_PATH=/vault
+      - QDRANT_URL=http://qdrant:6333
+      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - COLLECTION_NAME=${COLLECTION_NAME:-obsidian_vault}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+  indexer:
+    build: .
+    command: uv run python indexer/main.py
+    volumes:
+      - ${VAULT_PATH}:/vault:ro
+    environment:
+      - VAULT_PATH=/vault
+      - QDRANT_URL=http://qdrant:6333
+      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - COLLECTION_NAME=${COLLECTION_NAME:-obsidian_vault}
+      - CHUNK_SIZE=${CHUNK_SIZE:-500}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-768}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+volumes:
+  qdrant_data:
