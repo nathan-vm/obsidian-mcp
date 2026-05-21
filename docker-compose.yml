@@ -6,18 +6,20 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/readyz"]
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   obsidian-mcp:
     build: .
-    command: uv run python obsidian-mcp/server.py
+    command: uv run watchmedo auto-restart --patterns="*.py" --recursive -- python obsidian-mcp/server.py
     ports:
       - "${MCP_PORT:-55000}:55000"
     volumes:
       - ${VAULT_PATH}:/vault
+      - ./obsidian-mcp:/app/obsidian-mcp
+      - ./shared:/app/shared
     environment:
       - VAULT_PATH=/vault
       - QDRANT_URL=http://qdrant:6333

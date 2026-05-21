@@ -7,5 +7,6 @@ WORKDIR /app
 COPY pyproject.toml .
 RUN uv sync --all-groups
 
+COPY shared/ shared/
 COPY obsidian-mcp/ obsidian-mcp/
 COPY indexer/ indexer/

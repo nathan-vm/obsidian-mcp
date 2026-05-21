@@ -15,6 +15,7 @@ mcp = [
     "mcp[cli]>=1.2.0",
     "uvicorn>=0.30.0",
     "starlette>=0.37.0",
+    "watchdog>=4.0.0",
 ]
 indexer = [
     "watchdog>=4.0.0",
