@@ -21,6 +21,7 @@ services:
       - ${VAULT_PATH}:/vault
       - ./obsidian-mcp:/app/obsidian-mcp
       - ./shared:/app/shared
+      - fastembed_cache:/root/.cache/fastembed
     environment:
       - VAULT_PATH=/vault
       - QDRANT_URL=http://qdrant:6333
@@ -41,6 +42,7 @@ services:
       - ${VAULT_PATH}:/vault:ro
       - ./indexer:/app/indexer
       - ./shared:/app/shared
+      - fastembed_cache:/root/.cache/fastembed
     environment:
       - VAULT_PATH=/vault
       - QDRANT_URL=http://qdrant:6333
@@ -60,3 +62,4 @@ services:
 
 volumes:
   qdrant_data:
+  fastembed_cache:

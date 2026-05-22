@@ -2,20 +2,32 @@ import logging
 import time
 from pathlib import Path
 
+from fastembed import SparseTextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
     MatchValue,
+    NamedSparseVector,
+    NamedVector,
     PointIdsList,
     PointStruct,
+    SparseIndexParams,
+    SparseVector,
+    SparseVectorParams,
     VectorParams,
 )
 
 from chunker import chunk_id, chunk_markdown
 
 log = logging.getLogger(__name__)
+
+DENSE_NAME = "text-dense"
+SPARSE_NAME = "text-sparse"
+
+# Payload fields to index for efficient filtering
+_INDEXED_FIELDS = ("path", "folder", "folders", "filename", "tags")
 
 
 class QdrantStore:
@@ -26,6 +38,7 @@ class QdrantStore:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self._embedding_dim: int | None = None
+        self._bm25: SparseTextEmbedding | None = None
 
     def _get_dim(self) -> int:
         if self._embedding_dim is None:
@@ -33,6 +46,15 @@ class QdrantStore:
             self._embedding_dim = len(probe)
             log.info("embedding dim detected: %d", self._embedding_dim)
         return self._embedding_dim
+
+    def _get_bm25(self) -> SparseTextEmbedding:
+        if self._bm25 is None:
+            self._bm25 = SparseTextEmbedding(model_name="Qdrant/bm25")
+        return self._bm25
+
+    def _bm25_vector(self, text: str) -> SparseVector:
+        emb = next(self._get_bm25().embed([text]))
+        return SparseVector(indices=emb.indices.tolist(), values=emb.values.tolist())
 
     def wait_for_connection(self, retries: int = 30, delay: int = 2) -> None:
         for i in range(retries):
@@ -46,14 +68,31 @@ class QdrantStore:
         raise RuntimeError("could not connect to Qdrant")
 
     def ensure_collection(self) -> None:
-        existing = [c.name for c in self.client.get_collections().collections]
-        if self.collection not in existing:
-            dim = self._get_dim()
-            self.client.create_collection(
+        existing = {c.name for c in self.client.get_collections().collections}
+        if self.collection in existing:
+            info = self.client.get_collection(self.collection)
+            sparse_cfg = info.config.params.sparse_vectors_config or {}
+            if SPARSE_NAME not in sparse_cfg:
+                log.info("collection missing BM25 sparse vectors — recreating (full reindex needed)")
+                self.client.delete_collection(self.collection)
+            else:
+                return
+
+        dim = self._get_dim()
+        self.client.create_collection(
+            collection_name=self.collection,
+            vectors_config={DENSE_NAME: VectorParams(size=dim, distance=Distance.COSINE)},
+            sparse_vectors_config={
+                SPARSE_NAME: SparseVectorParams(index=SparseIndexParams(on_disk=False))
+            },
+        )
+        for field in _INDEXED_FIELDS:
+            self.client.create_payload_index(
                 collection_name=self.collection,
-                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+                field_name=field,
+                field_schema="keyword",
             )
-            log.info("created collection '%s' (dim=%d)", self.collection, dim)
+        log.info("created collection '%s' (dim=%d, BM25 sparse, payload indexes)", self.collection, dim)
 
     def delete_note_chunks(self, rel_path: str) -> None:
         try:
@@ -109,8 +148,13 @@ class QdrantStore:
             points = []
             for i, chunk in enumerate(chunks):
                 context = f"{chunk['path']}\n{chunk['heading']}\n\n{chunk['chunk_text']}"
-                vector = self.embedder.embed_query(context)
-                points.append(PointStruct(id=chunk_id(rel, i), vector=vector, payload=chunk))
+                dense = self.embedder.embed_query(context)
+                sparse = self._bm25_vector(context)
+                points.append(PointStruct(
+                    id=chunk_id(rel, i),
+                    vector={DENSE_NAME: dense, SPARSE_NAME: sparse},
+                    payload=chunk,
+                ))
             self.delete_note_chunks(rel)
             if points:
                 self.client.upsert(collection_name=self.collection, points=points)

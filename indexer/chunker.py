@@ -1,5 +1,6 @@
 import hashlib
 import re
+from pathlib import Path
 
 import frontmatter
 
@@ -18,6 +19,16 @@ def chunk_markdown(text: str, rel_path: str, chunk_size: int, chunk_overlap: int
         yaml_tags = [yaml_tags]
     inline_tags = re.findall(r"(?<!\S)#([\w/]+)", content)
     all_tags = list(set(yaml_tags + inline_tags))
+
+    p = Path(rel_path)
+    filename = p.stem
+    folder = str(p.parent) if str(p.parent) != "." else ""
+    # All ancestor directories for hierarchical filtering
+    ancestors = []
+    current = p.parent
+    while str(current) not in (".", ""):
+        ancestors.append(str(current))
+        current = current.parent
 
     heading_re = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
     sections: list[tuple[str, str]] = []
@@ -46,6 +57,9 @@ def chunk_markdown(text: str, rel_path: str, chunk_size: int, chunk_overlap: int
             if current_words + words > chunk_size and current:
                 chunks.append({
                     "path": rel_path,
+                    "folder": folder,
+                    "folders": ancestors,
+                    "filename": filename,
                     "heading": heading,
                     "chunk_text": "\n\n".join(current),
                     "tags": all_tags,
@@ -57,11 +71,17 @@ def chunk_markdown(text: str, rel_path: str, chunk_size: int, chunk_overlap: int
         if current:
             chunks.append({
                 "path": rel_path,
+                "folder": folder,
+                "folders": ancestors,
+                "filename": filename,
                 "heading": heading,
                 "chunk_text": "\n\n".join(current),
                 "tags": all_tags,
             })
 
     if not chunks:
-        chunks = [{"path": rel_path, "heading": "", "chunk_text": text[:2000], "tags": all_tags}]
+        chunks = [{
+            "path": rel_path, "folder": folder, "folders": ancestors,
+            "filename": filename, "heading": "", "chunk_text": text[:2000], "tags": all_tags,
+        }]
     return chunks
