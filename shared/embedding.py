@@ -1,28 +1,19 @@
-from langchain_core.embeddings import Embeddings
+from fastembed import TextEmbedding
+
+_MODEL_CACHE_DIR = "/app/models"
 
 
-def make_embedder(
-    provider: str,
-    model: str,
-    lm_studio_url: str = "",
-    openai_api_key: str = "",
-    gemini_api_key: str = "",
-) -> Embeddings:
-    if provider == "openai":
-        from langchain_openai import OpenAIEmbeddings
-        return OpenAIEmbeddings(model=model, api_key=openai_api_key or None)
+class FastEmbedder:
+    """Local ONNX embedder via fastembed — no external API required."""
 
-    if provider == "gemini":
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        return GoogleGenerativeAIEmbeddings(model=model, google_api_key=gemini_api_key or None)
+    def __init__(self, model_name: str, cache_dir: str = _MODEL_CACHE_DIR):
+        self._model = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
 
-    # default: lm_studio (OpenAI-compatible local server)
-    # check_embedding_ctx_length=False prevents LangChain from pre-tokenizing text
-    # into token-ID arrays, which LM Studio doesn't accept — it needs raw strings.
-    from langchain_openai import OpenAIEmbeddings
-    return OpenAIEmbeddings(
-        model=model,
-        openai_api_base=lm_studio_url or "http://host.docker.internal:1234/v1",
-        openai_api_key="lm-studio",
-        check_embedding_ctx_length=False,
-    )
+    def embed_query(self, text: str) -> list[float]:
+        return list(next(self._model.embed([text])))
+
+    async def aembed_query(self, text: str) -> list[float]:
+        return self.embed_query(text)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [list(v) for v in self._model.embed(texts)]

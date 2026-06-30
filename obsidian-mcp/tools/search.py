@@ -11,8 +11,6 @@ from qdrant_client.models import (
     SparseVector,
 )
 
-from shared.embedding import make_embedder
-
 DENSE_NAME = "text-dense"
 SPARSE_NAME = "text-sparse"
 
@@ -50,21 +48,13 @@ def _build_filter(tag: str, path: str, directory: str) -> Filter | None:
     if path:
         must.append(FieldCondition(key="path", match=MatchValue(value=path)))
     if directory:
-        # "folders" stores all ancestor paths, so this matches notes in any sub-tree
         must.append(FieldCondition(key="folders", match=MatchValue(value=directory)))
     return Filter(must=must) if must else None
 
 
-def register(mcp, config):
+def register(mcp, config, client: QdrantClient, embedder):
     vault = config.vault_path
-    qdrant = QdrantClient(url=config.qdrant_url)
-    embedder = make_embedder(
-        provider=config.embedding_provider,
-        model=config.embedding_model,
-        lm_studio_url=config.lm_studio_url,
-        openai_api_key=config.openai_api_key,
-        gemini_api_key=config.gemini_api_key,
-    )
+    qdrant = client
 
     @mcp.tool()
     def fulltext_search(query: str, case_sensitive: bool = False) -> list[dict]:
@@ -121,8 +111,7 @@ def register(mcp, config):
         """Hybrid semantic + BM25 search using Qdrant.
 
         Combines dense vector similarity with BM25 keyword matching via RRF fusion.
-        Falls back to fulltext_search if the index is empty or the embedding provider
-        is unreachable.
+        Falls back to fulltext_search if the index is empty or not yet ready.
 
         Args:
             query: Natural language query
@@ -157,7 +146,6 @@ def register(mcp, config):
                 with_payload=True,
             )
         except Exception:
-            # Collection might be old format (unnamed vector) — fall back
             return _fallback_search(query, n_results)
 
         try:

@@ -1,0 +1,19 @@
+FROM python:3.12-slim
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+WORKDIR /app
+
+COPY pyproject.toml .
+RUN uv sync
+
+# Source dirs are volume-mounted at runtime — no COPY here.
+# The embedding model is downloaded on first run and cached in the model_cache volume.
+
+ENV VAULT_PATH=/vault
+ENV DATA_PATH=/data
+
+# watchmedo auto-restarts the server when any .py file changes
+CMD ["uv", "run", "watchmedo", "auto-restart", \
+     "--patterns=*.py", "--recursive", "--", \
+     "python", "obsidian-mcp/server.py"]

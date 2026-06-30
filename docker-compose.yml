@@ -1,65 +1,28 @@
 services:
-  qdrant:
-    profiles: [full]
-    image: qdrant/qdrant:latest
-    ports:
-      - "55333:6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   obsidian-mcp:
-    build: .
-    command: uv run watchmedo auto-restart --patterns="*.py" --recursive -- python obsidian-mcp/server.py
-    ports:
-      - "${MCP_PORT:-55000}:55000"
-    volumes:
-      - ${VAULT_PATH}:/vault
-      - ./obsidian-mcp:/app/obsidian-mcp
-      - ./shared:/app/shared
-      - fastembed_cache:/root/.cache/fastembed
-    environment:
-      - VAULT_PATH=/vault
-      - QDRANT_URL=http://qdrant:6333
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-lm_studio}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
-      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - COLLECTION_NAME=${COLLECTION_NAME:-obsidian_vault}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-  indexer:
-    profiles: [full]
-    build: .
-    command: uv run python indexer/main.py
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
     volumes:
       - ${VAULT_PATH}:/vault:ro
-      - ./indexer:/app/indexer
       - ./shared:/app/shared
-      - fastembed_cache:/root/.cache/fastembed
+      - ./indexer:/app/indexer
+      - ./obsidian-mcp:/app/obsidian-mcp
+      - obsidian_data:/data
+      - model_cache:/app/models
     environment:
       - VAULT_PATH=/vault
-      - QDRANT_URL=http://qdrant:6333
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-lm_studio}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
-      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - DATA_PATH=/data
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
       - COLLECTION_NAME=${COLLECTION_NAME:-obsidian_vault}
       - CHUNK_SIZE=${CHUNK_SIZE:-500}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-50}
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    depends_on:
-      qdrant:
-        condition: service_healthy
+      - OBSERVER_INTERVAL=${OBSERVER_INTERVAL:-1.0}
+    # stdin_open is required for MCP stdio transport
+    stdin_open: true
 
 volumes:
-  qdrant_data:
-  fastembed_cache:
+  # Qdrant index — persists across container restarts
+  obsidian_data:
+  # fastembed model cache — avoids re-downloading on each build
+  model_cache:
