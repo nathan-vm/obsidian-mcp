@@ -1,98 +1,149 @@
 # obsidian-mcp
 
-A self-hosted MCP (Model Context Protocol) server that gives AI assistants semantic and full-text search over an Obsidian vault. Runs entirely locally via Docker.
+A self-hosted MCP (Model Context Protocol) server that gives AI assistants semantic and full-text search over an Obsidian vault. Runs as a single Docker container — no external services required.
 
 ## Architecture
 
 ```
 Obsidian Vault (host)
-        │
+        │  volume mount
         ▼
-  ┌─────────────┐       ┌─────────────────┐
-  │   indexer   │──────▶│   Qdrant (DB)   │
-  └─────────────┘       └────────┬────────┘
-                                 │
-  ┌─────────────┐                │
-  │  obsidian   │◀───────────────┘
-  │  mcp server │
-  └──────┬──────┘
-         │ SSE (port 55000)
-         ▼
-    Claude / AI client
+┌──────────────────────────────┐
+│        obsidian-mcp          │
+│                              │
+│  ┌──────────┐  ┌──────────┐ │
+│  │ indexer  │  │   MCP    │ │
+│  │ (thread) │  │  server  │ │
+│  └────┬─────┘  └────┬─────┘ │
+│       │              │       │
+│  ┌────▼──────────────▼─────┐ │
+│  │   Qdrant (embedded)     │ │
+│  │   fastembed ONNX model  │ │
+│  └─────────────────────────┘ │
+└──────────────────────────────┘
+        │  stdio
+        ▼
+   Claude / AI client
 ```
 
-| Service | Role |
-|---|---|
-| `qdrant` | Vector database — stores embeddings |
-| `indexer` | Reads vault, chunks notes, embeds text, upserts into Qdrant. Watches for file changes live |
-| `obsidian-mcp` | FastMCP server — exposes tools to AI clients over SSE |
+Everything runs inside a single container:
+- **Indexer** — background thread that chunks and embeds vault notes into Qdrant on startup, then watches for file changes
+- **MCP server** — FastMCP over stdio, exposes tools to the AI client
+- **Qdrant (embedded)** — in-process vector DB, no separate service needed
+- **fastembed** — local ONNX embedding model, no API key needed
 
-## Quick Start
+The Qdrant index is stored on a Docker volume and persists across container restarts.
 
-1. Create the env:
-```
-cp .env.example .env
-```
+---
 
-2. Set VAULT_PATH (and optionally EMBEDDING_PROVIDER)
+## Production
 
-3. Run the MCP in **full mode**
+### 1. Build the image
+
 ```bash
-docker compose --profile full up --build -d
+docker build -t obsidian-mcp .
 ```
 
-> **MCP only** (no Qdrant/indexer — fulltext search only):
-> ```bash
-> docker compose up -d
-> ```
+This bakes the `nomic-ai/nomic-embed-text-v1.5` model (~270 MB) into the image so no network access is needed at runtime.
 
-## Connecting to Claude
+### 2. Configure your MCP client
 
-**Claude Code (CLI):**
+**Claude Code:**
 ```bash
-claude mcp add obsidian-mcp --transport sse http://localhost:55000/sse
+claude mcp add obsidian \
+  -- docker run -i --rm \
+  -e VAULT_PATH=/vault \
+  -e DATA_PATH=/data \
+  -v /absolute/path/to/your/vault:/vault:ro \
+  -v obsidian-mcp-data:/data \
+  obsidian-mcp:latest
 ```
 
-**VS Code (>MCP: Open User Configuration - `mcp.json`):**
+**Claude Desktop / VS Code (`mcp.json`):**
 ```json
-"mcp": {
-  "servers": {
-    "obsidian-mcp": {
-      "type": "sse",
-      "url": "http://localhost:55000/sse"
+{
+  "mcpServers": {
+    "obsidian": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "run", "-i", "--rm",
+        "-e", "VAULT_PATH=/vault",
+        "-e", "DATA_PATH=/data",
+        "-v", "/absolute/path/to/your/vault:/vault:ro",
+        "-v", "obsidian-mcp-data:/data",
+        "obsidian-mcp:latest"
+      ]
     }
   }
 }
 ```
 
-## Embedding Providers
+The named volume `obsidian-mcp-data` is created automatically by Docker on first run and persists the Qdrant index across container restarts.
 
-Set `EMBEDDING_PROVIDER` to one of:
+---
 
-| Provider | Value | Required variable |
-|---|---|---|
-| LM Studio (default) | `lm_studio` | `LM_STUDIO_URL` |
-| OpenAI | `openai` | `OPENAI_API_KEY` |
-| Gemini | `gemini` | `GEMINI_API_KEY` |
+## Development
 
-Each `EMBEDDING_MODEL` gets its own Qdrant collection (`obsidian_vault__<model_slug>`), so you can switch models freely without data corruption and test multiple models side-by-side.
+Use `docker-compose.yml` + `Dockerfile.dev` for a live-reload dev environment. Source directories are bind-mounted so changes to `.py` files are picked up immediately via `watchmedo`.
+
+### 1. Set your vault path
+
+Copy `env.example` to a local env file and set `VAULT_PATH` to the absolute path of your vault on the host.
+
+### 2. Build the dev image
+
+```bash
+docker compose build
+```
+
+The model is **not** baked into the dev image — it is downloaded on first run and cached in the `model_cache` Docker volume.
+
+### 3. Configure your MCP client to use docker compose
+
+**Claude Code:**
+```bash
+claude mcp add obsidian \
+  -- docker compose \
+  -f /absolute/path/to/obsidian-mcp/docker-compose.yml \
+  run --rm obsidian-mcp
+```
+
+**Claude Desktop / VS Code (`mcp.json`):**
+```json
+{
+  "mcpServers": {
+    "obsidian": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "compose",
+        "-f", "/absolute/path/to/obsidian-mcp/docker-compose.yml",
+        "run", "--rm",
+        "obsidian-mcp"
+      ]
+    }
+  }
+}
+```
+
+Each time the MCP client starts a session it spawns a fresh container. `watchmedo` restarts the server process inside the running container when you edit source files mid-session.
+
+---
 
 ## Configuration
 
 | Variable | Default | Notes |
 |---|---|---|
-| `VAULT_PATH` | — | **Required.** Absolute path to your Obsidian vault on the host |
-| `EMBEDDING_PROVIDER` | `lm_studio` | `lm_studio` \| `openai` \| `gemini` |
-| `EMBEDDING_MODEL` | `nomic-embed-text` | Model name for the chosen provider |
-| `LM_STUDIO_URL` | `http://host.docker.internal:1234/v1` | LM Studio local server |
-| `OPENAI_API_KEY` | — | For `provider=openai` (e.g. `text-embedding-3-small`) |
-| `GEMINI_API_KEY` | — | For `provider=gemini` (e.g. `models/text-embedding-004`) |
-| `QDRANT_URL` | `http://qdrant:6333` | Internal Docker URL — don't change |
+| `VAULT_PATH` | — | **Required.** Path inside the container where the vault is mounted |
+| `DATA_PATH` | `/data` | Where to store the Qdrant index — mount a volume here for persistence |
+| `EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Any fastembed-compatible model |
 | `COLLECTION_NAME` | `obsidian_vault` | Base name — actual collection is `<name>__<model_slug>` |
 | `CHUNK_SIZE` | `500` | Words per chunk |
 | `CHUNK_OVERLAP` | `50` | Overlap words between chunks |
-| `MCP_PORT` | `55000` | Port exposed to host |
 | `OBSERVER_INTERVAL` | `1.0` | Vault watcher poll interval (seconds) |
+
+---
 
 ## MCP Tools
 
@@ -110,39 +161,43 @@ Each `EMBEDDING_MODEL` gets its own Qdrant collection (`obsidian_vault__<model_s
 ### Search
 | Tool | Description |
 |---|---|
-| `search_similar` | Semantic search via Qdrant embeddings. Accepts optional `tag` filter. Falls back to fulltext automatically |
+| `search_similar` | Hybrid semantic + BM25 search with RRF fusion. Accepts `tag`, `path`, `directory` filters. Falls back to fulltext if index is not ready |
 | `fulltext_search` | Regex grep across all notes — use for exact terms, titles, or tags |
 | `indexing_status` | How many chunks are currently in the vector index |
+
+---
 
 ## Project Structure
 
 ```
 obsidian-mcp/
-├── docker-compose.yml
-├── Dockerfile
+├── Dockerfile           # Production image (model baked in)
+├── Dockerfile.dev       # Dev image (model cached in volume, source bind-mounted)
+├── docker-compose.yml   # Dev environment
 ├── pyproject.toml
 ├── shared/
-│   ├── config.py          # Config dataclass loaded from env
-│   └── embedding.py       # LangChain embedder factory (lm_studio/openai/gemini)
+│   ├── config.py        # Config dataclass loaded from env
+│   └── embedding.py     # FastEmbedder wrapping fastembed ONNX
 ├── indexer/
-│   ├── main.py            # Entry point: reindex + start watcher
-│   ├── chunker.py         # Heading-aware markdown chunker
-│   ├── embedder.py        # Delegates to shared.embedding
-│   ├── store.py           # QdrantStore — index/move/delete/reindex
-│   └── watcher.py         # VaultHandler (watchdog events)
+│   ├── main.py          # Standalone entry point (calls runner.run_indexer)
+│   ├── runner.py        # run_indexer() — reindex + watchdog loop
+│   ├── chunker.py       # Heading-aware markdown chunker
+│   ├── store.py         # QdrantStore — index/move/delete/reindex
+│   └── watcher.py       # VaultHandler (watchdog events)
 └── obsidian-mcp/
-    ├── server.py          # FastMCP server setup
-    ├── embedding.py       # Delegates to shared.embedding
-    ├── utils.py           # safe_path() path traversal guard
+    ├── server.py        # All-in-one entry point: starts indexer thread + MCP stdio server
+    ├── utils.py         # safe_path() path traversal guard
     └── tools/
-        ├── notes.py       # CRUD tools
-        └── search.py      # Semantic + fulltext search tools
+        ├── notes.py     # CRUD tools
+        └── search.py    # Semantic + fulltext search tools
 ```
 
 ## Implementation Notes
 
 - **Chunking**: splits notes by markdown headings, then by paragraph up to `CHUNK_SIZE` words. Tags collected from YAML frontmatter and inline `#tags`.
 - **Chunk IDs**: stable MD5 hashes of `path:index` — re-indexing upserts cleanly without duplicates.
+- **Hybrid search**: combines dense cosine similarity (fastembed) with BM25 sparse vectors, fused via Reciprocal Rank Fusion (RRF).
 - **Move handling**: when a note is moved/renamed, existing vectors are fetched and re-inserted with updated path metadata — no re-embedding needed.
 - **Path safety**: `safe_path()` rejects any path that escapes the vault root (path traversal protection).
-- **Fallback search**: `search_similar` degrades to `fulltext_search` if Qdrant is empty or the embedding provider is unreachable.
+- **Fallback search**: `search_similar` degrades to `fulltext_search` if the index is empty or not yet ready (e.g. during initial indexing).
+

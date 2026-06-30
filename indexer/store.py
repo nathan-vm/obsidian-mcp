@@ -1,5 +1,4 @@
 import logging
-import time
 from pathlib import Path
 
 from fastembed import SparseTextEmbedding
@@ -26,13 +25,13 @@ log = logging.getLogger(__name__)
 DENSE_NAME = "text-dense"
 SPARSE_NAME = "text-sparse"
 
-# Payload fields to index for efficient filtering
 _INDEXED_FIELDS = ("path", "folder", "folders", "filename", "tags")
 
 
 class QdrantStore:
-    def __init__(self, url: str, collection: str, embedder, chunk_size: int, chunk_overlap: int):
-        self.client = QdrantClient(url=url)
+    def __init__(self, path: Path, collection: str, embedder, chunk_size: int, chunk_overlap: int):
+        path.mkdir(parents=True, exist_ok=True)
+        self.client = QdrantClient(path=str(path))
         self.collection = collection
         self.embedder = embedder
         self.chunk_size = chunk_size
@@ -55,17 +54,6 @@ class QdrantStore:
     def _bm25_vector(self, text: str) -> SparseVector:
         emb = next(self._get_bm25().embed([text]))
         return SparseVector(indices=emb.indices.tolist(), values=emb.values.tolist())
-
-    def wait_for_connection(self, retries: int = 30, delay: int = 2) -> None:
-        for i in range(retries):
-            try:
-                self.client.get_collections()
-                log.info("connected to Qdrant")
-                return
-            except Exception:
-                log.info("waiting for Qdrant (%d/%d)...", i + 1, retries)
-                time.sleep(delay)
-        raise RuntimeError("could not connect to Qdrant")
 
     def ensure_collection(self) -> None:
         existing = {c.name for c in self.client.get_collections().collections}
