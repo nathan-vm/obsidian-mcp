@@ -48,23 +48,33 @@ class QdrantStore:
 
     def _get_bm25(self) -> SparseTextEmbedding:
         if self._bm25 is None:
-            self._bm25 = SparseTextEmbedding(model_name="Qdrant/bm25")
+            self._bm25 = SparseTextEmbedding(model_name="Qdrant/bm25", cache_dir="/app/models")
         return self._bm25
 
     def _bm25_vector(self, text: str) -> SparseVector:
         emb = next(self._get_bm25().embed([text]))
         return SparseVector(indices=emb.indices.tolist(), values=emb.values.tolist())
 
-    def ensure_collection(self) -> None:
+    def ensure_collection(self) -> bool:
+        """Ensure the collection exists and is configured correctly.
+
+        Returns True if a full reindex is needed (collection was created or recreated),
+        False if the collection already has data and can be used as-is.
+        """
         existing = {c.name for c in self.client.get_collections().collections}
         if self.collection in existing:
             info = self.client.get_collection(self.collection)
-            sparse_cfg = info.config.params.sparse_vectors_config or {}
+            sparse_cfg = getattr(info.config.params, "sparse_vectors", None) or {}
             if SPARSE_NAME not in sparse_cfg:
                 log.info("collection missing BM25 sparse vectors — recreating (full reindex needed)")
                 self.client.delete_collection(self.collection)
             else:
-                return
+                count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
+                if count > 0:
+                    log.info("collection '%s' already has %d chunks — skipping full reindex", self.collection, count)
+                    return False
+                log.info("collection '%s' exists but is empty — reindexing", self.collection)
+                return True
 
         dim = self._get_dim()
         self.client.create_collection(
@@ -81,6 +91,7 @@ class QdrantStore:
                 field_schema="keyword",
             )
         log.info("created collection '%s' (dim=%d, BM25 sparse, payload indexes)", self.collection, dim)
+        return True
 
     def delete_note_chunks(self, rel_path: str) -> None:
         try:
