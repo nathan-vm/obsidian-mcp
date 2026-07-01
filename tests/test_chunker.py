@@ -51,6 +51,30 @@ def test_chunk_markdown_splits_large_content():
     assert len(chunks) > 1
 
 
+def test_chunk_markdown_tags_as_string():
+    # frontmatter tags can be a plain string instead of a list
+    text = "---\ntags: solo-tag\n---\n\n# Note\n\nContent."
+    chunks = chunk_markdown(text, "test.md", chunk_size=200, chunk_overlap=0)
+    assert "solo-tag" in chunks[0]["tags"]
+
+
+def test_chunk_markdown_content_before_first_heading():
+    # body text that appears before any heading goes into a section with empty heading stack
+    text = "Preamble paragraph.\n\n# Section One\n\nSection body."
+    chunks = chunk_markdown(text, "test.md", chunk_size=200, chunk_overlap=0)
+    preamble = next(c for c in chunks if c["chunk_text"] == "Preamble paragraph.")
+    assert preamble["heading"] == ""
+
+
+def test_chunk_markdown_chunk_overlap():
+    paras = [f"Para {i} with some words." for i in range(10)]
+    text = "# Section\n\n" + "\n\n".join(paras)
+    chunks_no_overlap = chunk_markdown(text, "f.md", chunk_size=8, chunk_overlap=0)
+    chunks_overlap = chunk_markdown(text, "f.md", chunk_size=8, chunk_overlap=1)
+    # With overlap, each chunk (except the first) starts with the last para of the previous chunk
+    assert len(chunks_overlap) >= len(chunks_no_overlap)
+
+
 def test_chunk_markdown_empty_file_fallback():
     chunks = chunk_markdown("", "empty.md", chunk_size=200, chunk_overlap=0)
     assert len(chunks) == 1

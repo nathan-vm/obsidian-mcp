@@ -18,11 +18,21 @@ dev = [
     "pytest>=8.0",
     "pip-audit>=2.7",
     "commitizen>=3.0",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = [".", "indexer"]
+addopts = "--cov=. --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+    "indexer/main.py",
+    "indexer/embedder.py",
+    "obsidian-mcp/*",
+]
 
 [tool.ruff]
 line-length = 120

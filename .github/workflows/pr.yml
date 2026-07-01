@@ -75,5 +75,5 @@ jobs:
 
       - run: uv sync --group dev
 
-      - name: pytest
+      - name: pytest + coverage
         run: uv run pytest -v
