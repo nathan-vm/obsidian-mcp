@@ -69,7 +69,9 @@ class QdrantStore:
                 else:
                     count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
                     if count > 0:
-                        log.info("collection '%s' already has %d chunks — skipping full reindex", self.collection, count)
+                        log.info(
+                            "collection '%s' already has %d chunks — skipping full reindex", self.collection, count
+                        )
                         return False
                     log.info("collection '%s' exists but is empty — reindexing", self.collection)
                     return True
