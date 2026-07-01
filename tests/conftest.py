@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,18 @@ def make_mock_client(collections: list[str] | None = None) -> MagicMock:
     existing = [MagicMock(name=n) for n in (collections or [])]
     client.get_collections.return_value = MagicMock(collections=existing)
     return client
+
+
+def make_mock_pool(client: MagicMock) -> MagicMock:
+    """Return a QdrantPool mock whose session() yields the given client."""
+    pool = MagicMock()
+
+    @contextmanager
+    def _session():
+        yield client
+
+    pool.session = _session
+    return pool
 
 
 def make_mock_bm25() -> MagicMock:
@@ -44,11 +57,9 @@ def qdrant_store(tmp_path: Path, mock_client: MagicMock, mock_embedder: MagicMoc
     """QdrantStore with all external dependencies mocked out."""
     from store import QdrantStore
 
-    with (
-        patch("store.QdrantClient", return_value=mock_client),
-        patch("store.SparseTextEmbedding", return_value=mock_bm25),
-        patch.object(Path, "mkdir"),
-    ):
+    mock_pool = make_mock_pool(mock_client)
+
+    with patch("store.QdrantPool", return_value=mock_pool), patch("store.SparseTextEmbedding", return_value=mock_bm25):
         store = QdrantStore(
             path=tmp_path / "qdrant",
             collection="test_col",
@@ -57,6 +68,5 @@ def qdrant_store(tmp_path: Path, mock_client: MagicMock, mock_embedder: MagicMoc
             chunk_overlap=0,
         )
 
-    store.client = mock_client
     store._bm25 = mock_bm25
     return store

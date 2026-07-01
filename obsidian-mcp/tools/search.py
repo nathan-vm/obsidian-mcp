@@ -1,7 +1,7 @@
+import logging
 import re
 
 from fastembed import SparseTextEmbedding
-from qdrant_client import QdrantClient
 from qdrant_client.models import (
     FieldCondition,
     Filter,
@@ -10,6 +10,10 @@ from qdrant_client.models import (
     NamedVector,
     SparseVector,
 )
+
+from shared.qdrant_pool import QdrantPool
+
+log = logging.getLogger(__name__)
 
 DENSE_NAME = "text-dense"
 SPARSE_NAME = "text-sparse"
@@ -52,12 +56,11 @@ def _build_filter(tag: str, path: str, directory: str) -> Filter | None:
     return Filter(must=must) if must else None
 
 
-def register(mcp, config, client: QdrantClient | None, embedder):
+def register(mcp, config, pool: QdrantPool, embedder):
     vault = config.vault_path
-    qdrant = client
 
     @mcp.tool()
-    def fulltext_search(query: str, case_sensitive: bool = False) -> list[dict]:
+    def fulltext_search(query: str, case_sensitive: bool = False, mode: str = "keywords") -> list[dict]:
         """Fast full-text (grep) search across all notes.
 
         Use this as a fallback when semantic search returns no useful results,
@@ -66,26 +69,57 @@ def register(mcp, config, client: QdrantClient | None, embedder):
         Args:
             query: Text to search for
             case_sensitive: Default False
+            mode: "exact" matches the full query as a substring,
+                  "keywords" splits on whitespace and matches notes containing ALL keywords
         """
-        flags = 0 if not case_sensitive else re.IGNORECASE
-        pattern = re.compile(re.escape(query), flags if not case_sensitive else 0)
+        flags = re.IGNORECASE if not case_sensitive else 0
         results = []
-        for p in vault.rglob("*.md"):
-            text = p.read_text(encoding="utf-8", errors="ignore")
-            matches = [m.start() for m in pattern.finditer(text)]
-            if matches:
-                snippets = []
-                for pos in matches[:3]:
-                    start = max(0, pos - 100)
-                    end = min(len(text), pos + 100)
-                    snippets.append(text[start:end].replace("\n", " ").strip())
-                results.append(
-                    {
-                        "path": str(p.relative_to(vault)),
-                        "match_count": len(matches),
-                        "snippets": snippets,
-                    }
-                )
+
+        if mode == "exact":
+            pattern = re.compile(re.escape(query), flags)
+            for p in vault.rglob("*.md"):
+                text = p.read_text(encoding="utf-8", errors="ignore")
+                matches = [m.start() for m in pattern.finditer(text)]
+                if matches:
+                    snippets = []
+                    for pos in matches[:3]:
+                        start = max(0, pos - 100)
+                        end = min(len(text), pos + 100)
+                        snippets.append(text[start:end].replace("\n", " ").strip())
+                    results.append(
+                        {
+                            "path": str(p.relative_to(vault)),
+                            "match_count": len(matches),
+                            "snippets": snippets,
+                        }
+                    )
+        else:
+            # keywords mode: all words must be present
+            words = query.split()
+            if not words:
+                return []
+            patterns = [re.compile(re.escape(w), flags) for w in words]
+            for p in vault.rglob("*.md"):
+                text = p.read_text(encoding="utf-8", errors="ignore")
+                word_matches = [pat.findall(text) for pat in patterns]
+                if all(word_matches):
+                    total = sum(len(m) for m in word_matches)
+                    # snippet around first occurrence of first keyword
+                    first_match = patterns[0].search(text)
+                    snippet = ""
+                    if first_match:
+                        pos = first_match.start()
+                        start = max(0, pos - 100)
+                        end = min(len(text), pos + 200)
+                        snippet = text[start:end].replace("\n", " ").strip()
+                    results.append(
+                        {
+                            "path": str(p.relative_to(vault)),
+                            "match_count": total,
+                            "snippets": [snippet] if snippet else [],
+                        }
+                    )
+
         return sorted(results, key=lambda r: r["match_count"], reverse=True)
 
     def _fallback_search(query: str, n: int) -> list[dict]:
@@ -122,17 +156,7 @@ def register(mcp, config, client: QdrantClient | None, embedder):
             path: Filter by exact note path (e.g. "Work/Projects/note.md")
             directory: Filter by folder or any ancestor folder (e.g. "Work/Projects")
         """
-        if qdrant is None:
-            return _fallback_search(query, n_results)
-
         collection = config.active_collection
-        try:
-            info = qdrant.get_collection(collection)
-            count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
-            if count == 0:
-                return _fallback_search(query, n_results)
-        except Exception:
-            return _fallback_search(query, n_results)
 
         try:
             dense_vector = await embedder.aembed_query(query)
@@ -143,33 +167,40 @@ def register(mcp, config, client: QdrantClient | None, embedder):
         fetch = n_results * 3
 
         try:
-            dense_hits = qdrant.search(
-                collection_name=collection,
-                query_vector=NamedVector(name=DENSE_NAME, vector=dense_vector),
-                limit=fetch,
-                query_filter=filter_condition,
-                with_payload=True,
-            )
-        except Exception:
-            return _fallback_search(query, n_results)
+            with pool.session() as client:
+                info = client.get_collection(collection)
+                count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
+                if count == 0:
+                    return _fallback_search(query, n_results)
 
-        try:
-            bm25_emb = next(_get_bm25().query_embed(query))
-            sparse_hits = qdrant.search(
-                collection_name=collection,
-                query_vector=NamedSparseVector(
-                    name=SPARSE_NAME,
-                    vector=SparseVector(
-                        indices=bm25_emb.indices.tolist(),
-                        values=bm25_emb.values.tolist(),
-                    ),
-                ),
-                limit=fetch,
-                query_filter=filter_condition,
-                with_payload=True,
-            )
-        except Exception:
-            sparse_hits = []
+                dense_hits = client.search(
+                    collection_name=collection,
+                    query_vector=NamedVector(name=DENSE_NAME, vector=dense_vector),
+                    limit=fetch,
+                    query_filter=filter_condition,
+                    with_payload=True,
+                )
+
+                try:
+                    bm25_emb = next(_get_bm25().query_embed(query))
+                    sparse_hits = client.search(
+                        collection_name=collection,
+                        query_vector=NamedSparseVector(
+                            name=SPARSE_NAME,
+                            vector=SparseVector(
+                                indices=bm25_emb.indices.tolist(),
+                                values=bm25_emb.values.tolist(),
+                            ),
+                        ),
+                        limit=fetch,
+                        query_filter=filter_condition,
+                        with_payload=True,
+                    )
+                except Exception:
+                    sparse_hits = []
+        except Exception as e:
+            log.warning("Qdrant search unavailable: %s — using fulltext fallback", e)
+            return _fallback_search(query, n_results)
 
         fused = _rrf(dense_hits, sparse_hits)[:n_results]
         return [
@@ -189,17 +220,16 @@ def register(mcp, config, client: QdrantClient | None, embedder):
     def indexing_status() -> dict:
         """Return how many note chunks are currently indexed in the vector database."""
         collection = config.active_collection
-        if qdrant is None:
-            return {"collection": collection, "status": "standby — indexer lock held by another container"}
         try:
-            info = qdrant.get_collection(collection)
-            count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
-            sparse_cfg = getattr(info.config.params, "sparse_vectors", None) or {}
-            return {
-                "collection": collection,
-                "points_indexed": count,
-                "has_bm25": SPARSE_NAME in sparse_cfg,
-                "status": str(info.status),
-            }
+            with pool.session() as client:
+                info = client.get_collection(collection)
+                count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
+                sparse_cfg = getattr(info.config.params, "sparse_vectors", None) or {}
+                return {
+                    "collection": collection,
+                    "points_indexed": count,
+                    "has_bm25": SPARSE_NAME in sparse_cfg,
+                    "status": str(info.status),
+                }
         except Exception as e:
             return {"collection": collection, "error": str(e)}
