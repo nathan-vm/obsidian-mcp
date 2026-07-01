@@ -30,7 +30,6 @@ addopts = "--cov=. --cov-report=term-missing --cov-fail-under=80"
 omit = [
     "tests/*",
     "indexer/main.py",
-    "indexer/embedder.py",
     "obsidian-mcp/*",
 ]
 
@@ -50,3 +49,4 @@ name = "cz_conventional_commits"
 version_provider = "pep621"
 tag_format = "v$version"
 bump_message = "bump: version $current_version → $new_version [skip ci]"
+annotated_tag = true

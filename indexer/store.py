@@ -16,6 +16,7 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from shared.embedding import FastEmbedder
 from shared.qdrant_pool import QdrantPool
 
 log = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ _INDEXED_FIELDS = ("path", "folder", "folders", "filename", "tags")
 
 
 class QdrantStore:
-    def __init__(self, path: Path, collection: str, embedder, chunk_size: int, chunk_overlap: int):
+    def __init__(self, path: Path, collection: str, embedder: FastEmbedder, chunk_size: int, chunk_overlap: int):
         self.pool = QdrantPool(path)
         self.collection = collection
         self.embedder = embedder
