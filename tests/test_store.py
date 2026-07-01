@@ -1,7 +1,6 @@
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests.conftest import make_mock_bm25, make_mock_client
+from tests.conftest import make_mock_bm25, make_mock_client, make_mock_pool
 
 
 def _make_store(tmp_path, client, embedder, bm25=None):
@@ -10,11 +9,9 @@ def _make_store(tmp_path, client, embedder, bm25=None):
     if bm25 is None:
         bm25 = make_mock_bm25()
 
-    with (
-        patch("store.QdrantClient", return_value=client),
-        patch("store.SparseTextEmbedding", return_value=bm25),
-        patch.object(Path, "mkdir"),
-    ):
+    mock_pool = make_mock_pool(client)
+
+    with patch("store.QdrantPool", return_value=mock_pool), patch("store.SparseTextEmbedding", return_value=bm25):
         store = QdrantStore(
             path=tmp_path / "qdrant",
             collection="test_col",
@@ -23,25 +20,22 @@ def _make_store(tmp_path, client, embedder, bm25=None):
             chunk_overlap=0,
         )
 
-    store.client = client
     store._bm25 = bm25
     return store
 
 
 class TestInit:
-    def test_client_created_with_path(self, tmp_path, mock_embedder):
-        client = make_mock_client()
+    def test_pool_created_with_path(self, tmp_path, mock_embedder):
         qdrant_path = tmp_path / "qdrant"
         with (
-            patch("store.QdrantClient", return_value=client) as mock_cls,
+            patch("store.QdrantPool") as mock_pool_cls,
             patch("store.SparseTextEmbedding"),
-            patch.object(Path, "mkdir"),
         ):
             from store import QdrantStore
 
             QdrantStore(path=qdrant_path, collection="col", embedder=mock_embedder, chunk_size=200, chunk_overlap=0)
 
-        mock_cls.assert_called_once_with(path=str(qdrant_path))
+        mock_pool_cls.assert_called_once_with(qdrant_path)
 
     def test_embedding_dim_starts_uncached(self, qdrant_store):
         assert qdrant_store._embedding_dim is None

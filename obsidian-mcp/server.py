@@ -54,23 +54,19 @@ def main() -> None:
 
     embedder = FastEmbedder(model_name=config.embedding_model)
 
-    # Try to open Qdrant for search (may fail if the DB is exclusively locked by another container)
-    store = None
-    try:
-        store = QdrantStore(
-            path=config.qdrant_path,
-            collection=config.active_collection,
-            embedder=embedder,
-            chunk_size=config.chunk_size,
-            chunk_overlap=config.chunk_overlap,
-        )
-        log.info("Qdrant opened (search available)")
-    except Exception as e:
-        log.warning("could not open Qdrant: %s — search_similar will fall back to fulltext", e)
+    # QdrantStore now uses dynamic locking — no permanent client needed
+    store = QdrantStore(
+        path=config.qdrant_path,
+        collection=config.active_collection,
+        embedder=embedder,
+        chunk_size=config.chunk_size,
+        chunk_overlap=config.chunk_overlap,
+    )
+    log.info("Qdrant pool ready (dynamic locking)")
 
-    # Try to acquire the indexer lock (only one container runs the indexer at a time)
+    # Try to acquire the indexer lock (only one container runs the watcher at a time)
     lock_fd = _try_acquire_indexer_lock(config.data_path)
-    if lock_fd is not None and store is not None:
+    if lock_fd is not None:
         indexer_thread = threading.Thread(
             target=run_indexer,
             args=(store, config.vault_path, config.observer_interval),
@@ -79,14 +75,12 @@ def main() -> None:
         )
         indexer_thread.start()
         log.info("indexer started (collection=%s)", config.active_collection)
-    elif lock_fd is not None and store is None:
-        log.warning("acquired indexer lock but Qdrant is not open — skipping indexer")
     else:
         log.info("running in search-only mode (indexer lock held by another container)")
 
     mcp = FastMCP("obsidian")
     register_notes(mcp, config)
-    register_search(mcp, config, store.client if store else None, embedder)
+    register_search(mcp, config, store.pool, embedder)
 
     log.info("MCP server ready (stdio)")
     mcp.run(transport="stdio")

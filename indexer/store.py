@@ -3,7 +3,6 @@ from pathlib import Path
 
 from chunker import chunk_id, chunk_markdown
 from fastembed import SparseTextEmbedding
-from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -17,6 +16,8 @@ from qdrant_client.models import (
     VectorParams,
 )
 
+from shared.qdrant_pool import QdrantPool
+
 log = logging.getLogger(__name__)
 
 DENSE_NAME = "text-dense"
@@ -27,8 +28,7 @@ _INDEXED_FIELDS = ("path", "folder", "folders", "filename", "tags")
 
 class QdrantStore:
     def __init__(self, path: Path, collection: str, embedder, chunk_size: int, chunk_overlap: int):
-        path.mkdir(parents=True, exist_ok=True)
-        self.client = QdrantClient(path=str(path))
+        self.pool = QdrantPool(path)
         self.collection = collection
         self.embedder = embedder
         self.chunk_size = chunk_size
@@ -58,72 +58,77 @@ class QdrantStore:
         Returns True if a full reindex is needed (collection was created or recreated),
         False if the collection already has data and can be used as-is.
         """
-        existing = {c.name for c in self.client.get_collections().collections}
-        if self.collection in existing:
-            info = self.client.get_collection(self.collection)
-            sparse_cfg = getattr(info.config.params, "sparse_vectors", None) or {}
-            if SPARSE_NAME not in sparse_cfg:
-                log.info("collection missing BM25 sparse vectors — recreating (full reindex needed)")
-                self.client.delete_collection(self.collection)
-            else:
-                count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
-                if count > 0:
-                    log.info("collection '%s' already has %d chunks — skipping full reindex", self.collection, count)
-                    return False
-                log.info("collection '%s' exists but is empty — reindexing", self.collection)
-                return True
+        with self.pool.session() as client:
+            existing = {c.name for c in client.get_collections().collections}
+            if self.collection in existing:
+                info = client.get_collection(self.collection)
+                sparse_cfg = getattr(info.config.params, "sparse_vectors", None) or {}
+                if SPARSE_NAME not in sparse_cfg:
+                    log.info("collection missing BM25 sparse vectors — recreating (full reindex needed)")
+                    client.delete_collection(self.collection)
+                else:
+                    count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
+                    if count > 0:
+                        log.info(
+                            "collection '%s' already has %d chunks — skipping full reindex", self.collection, count
+                        )
+                        return False
+                    log.info("collection '%s' exists but is empty — reindexing", self.collection)
+                    return True
 
-        dim = self._get_dim()
-        self.client.create_collection(
-            collection_name=self.collection,
-            vectors_config={DENSE_NAME: VectorParams(size=dim, distance=Distance.COSINE)},
-            sparse_vectors_config={SPARSE_NAME: SparseVectorParams(index=SparseIndexParams(on_disk=False))},
-        )
-        for field in _INDEXED_FIELDS:
-            self.client.create_payload_index(
+            dim = self._get_dim()
+            client.create_collection(
                 collection_name=self.collection,
-                field_name=field,
-                field_schema="keyword",
+                vectors_config={DENSE_NAME: VectorParams(size=dim, distance=Distance.COSINE)},
+                sparse_vectors_config={SPARSE_NAME: SparseVectorParams(index=SparseIndexParams(on_disk=False))},
             )
-        log.info("created collection '%s' (dim=%d, BM25 sparse, payload indexes)", self.collection, dim)
-        return True
+            for field in _INDEXED_FIELDS:
+                client.create_payload_index(
+                    collection_name=self.collection,
+                    field_name=field,
+                    field_schema="keyword",
+                )
+            log.info("created collection '%s' (dim=%d, BM25 sparse, payload indexes)", self.collection, dim)
+            return True
 
     def delete_note_chunks(self, rel_path: str) -> None:
         try:
-            self.client.delete(
-                collection_name=self.collection,
-                points_selector=Filter(must=[FieldCondition(key="path", match=MatchValue(value=rel_path))]),
-            )
+            with self.pool.session() as client:
+                client.delete(
+                    collection_name=self.collection,
+                    points_selector=Filter(must=[FieldCondition(key="path", match=MatchValue(value=rel_path))]),
+                )
         except Exception:
             pass
 
     def move_note_chunks(self, old_rel: str, new_rel: str) -> None:
         """Update path for all chunks of a moved note, reusing existing vectors."""
         try:
-            results, _ = self.client.scroll(
-                collection_name=self.collection,
-                scroll_filter=Filter(must=[FieldCondition(key="path", match=MatchValue(value=old_rel))]),
-                with_vectors=True,
-                with_payload=True,
-                limit=1000,
-            )
-            if not results:
-                return
+            with self.pool.session() as client:
+                results, _ = client.scroll(
+                    collection_name=self.collection,
+                    scroll_filter=Filter(must=[FieldCondition(key="path", match=MatchValue(value=old_rel))]),
+                    with_vectors=True,
+                    with_payload=True,
+                    limit=1000,
+                )
+                if not results:
+                    return
 
-            old_ids = [p.id for p in results]
-            new_points = []
-            for i, point in enumerate(results):
-                new_payload = dict(point.payload)
-                new_payload["path"] = new_rel
-                new_points.append(PointStruct(id=chunk_id(new_rel, i), vector=point.vector, payload=new_payload))
+                old_ids = [p.id for p in results]
+                new_points = []
+                for i, point in enumerate(results):
+                    new_payload = dict(point.payload)
+                    new_payload["path"] = new_rel
+                    new_points.append(PointStruct(id=chunk_id(new_rel, i), vector=point.vector, payload=new_payload))
 
-            self.client.delete(
-                collection_name=self.collection,
-                points_selector=PointIdsList(points=old_ids),
-            )
-            if new_points:
-                self.client.upsert(collection_name=self.collection, points=new_points)
-            log.info("moved %d chunks: %s → %s", len(new_points), old_rel, new_rel)
+                client.delete(
+                    collection_name=self.collection,
+                    points_selector=PointIdsList(points=old_ids),
+                )
+                if new_points:
+                    client.upsert(collection_name=self.collection, points=new_points)
+                log.info("moved %d chunks: %s → %s", len(new_points), old_rel, new_rel)
         except Exception as e:
             log.error("move failed (%s → %s): %s — falling back to reindex", old_rel, new_rel, e)
             self.delete_note_chunks(old_rel)
@@ -145,9 +150,13 @@ class QdrantStore:
                         payload=chunk,
                     )
                 )
-            self.delete_note_chunks(rel)
-            if points:
-                self.client.upsert(collection_name=self.collection, points=points)
+            with self.pool.session() as client:
+                client.delete(
+                    collection_name=self.collection,
+                    points_selector=Filter(must=[FieldCondition(key="path", match=MatchValue(value=rel))]),
+                )
+                if points:
+                    client.upsert(collection_name=self.collection, points=points)
             log.info("indexed %s (%d chunks)", rel, len(points))
         except Exception as e:
             log.error("failed to index %s: %s", rel, e)

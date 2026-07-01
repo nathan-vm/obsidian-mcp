@@ -70,7 +70,7 @@ claude mcp add obsidian \
         "run", "-i", "--rm",
         "-e", "VAULT_PATH=/vault",
         "-e", "DATA_PATH=/data",
-        "-v", "/absolute/path/to/your/vault:/vault:ro",
+        "-v", "/absolute/path/to/your/vault:/vault",
         "-v", "obsidian-mcp-data:/data",
         "nathanvm/obsidian-mcp:latest"
       ]
@@ -106,7 +106,7 @@ The model is **not** baked into the dev image — it is downloaded on first run 
 claude mcp add obsidian \
   -- docker compose \
   -f /absolute/path/to/obsidian-mcp/docker-compose.yml \
-  run --rm obsidian-mcp
+  run --rm nathanvm/obsidian-mcp
 ```
 
 **Claude Desktop / VS Code (`mcp.json`):**
@@ -120,7 +120,7 @@ claude mcp add obsidian \
         "compose",
         "-f", "/absolute/path/to/obsidian-mcp/docker-compose.yml",
         "run", "--rm",
-        "obsidian-mcp"
+        "nathanvm/obsidian-mcp"
       ]
     }
   }
