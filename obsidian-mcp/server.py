@@ -1,3 +1,4 @@
+import fcntl
 import logging
 import sys
 import threading
@@ -27,32 +28,65 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
+def _try_acquire_indexer_lock(data_path: Path):
+    """Try to acquire an exclusive non-blocking lock on the indexer lock file.
+
+    Returns the open file descriptor if the lock was acquired, None otherwise.
+    The caller must keep the fd alive for the duration of the process.
+    """
+    lock_path = data_path / "indexer.lock"
+    fd = open(lock_path, "w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        log.info("indexer lock acquired (%s)", lock_path)
+        return fd
+    except BlockingIOError:
+        fd.close()
+        log.warning("indexer lock busy — another container is already indexing (%s)", lock_path)
+        log.warning("this container will serve MCP tools but skip indexing (search falls back to fulltext)")
+        return None
+
+
 def main() -> None:
     log.info("data path: %s", config.data_path)
     log.info("vault path: %s", config.vault_path)
     log.info("embedding model: %s", config.embedding_model)
 
     embedder = FastEmbedder(model_name=config.embedding_model)
-    store = QdrantStore(
-        path=config.qdrant_path,
-        collection=config.active_collection,
-        embedder=embedder,
-        chunk_size=config.chunk_size,
-        chunk_overlap=config.chunk_overlap,
-    )
 
-    indexer_thread = threading.Thread(
-        target=run_indexer,
-        args=(store, config.vault_path, config.observer_interval),
-        daemon=True,
-        name="indexer",
-    )
-    indexer_thread.start()
-    log.info("indexer started (collection=%s)", config.active_collection)
+    # Try to open Qdrant for search (may fail if the DB is exclusively locked by another container)
+    store = None
+    try:
+        store = QdrantStore(
+            path=config.qdrant_path,
+            collection=config.active_collection,
+            embedder=embedder,
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+        )
+        log.info("Qdrant opened (search available)")
+    except Exception as e:
+        log.warning("could not open Qdrant: %s — search_similar will fall back to fulltext", e)
+
+    # Try to acquire the indexer lock (only one container runs the indexer at a time)
+    lock_fd = _try_acquire_indexer_lock(config.data_path)
+    if lock_fd is not None and store is not None:
+        indexer_thread = threading.Thread(
+            target=run_indexer,
+            args=(store, config.vault_path, config.observer_interval),
+            daemon=True,
+            name="indexer",
+        )
+        indexer_thread.start()
+        log.info("indexer started (collection=%s)", config.active_collection)
+    elif lock_fd is not None and store is None:
+        log.warning("acquired indexer lock but Qdrant is not open — skipping indexer")
+    else:
+        log.info("running in search-only mode (indexer lock held by another container)")
 
     mcp = FastMCP("obsidian")
     register_notes(mcp, config)
-    register_search(mcp, config, store.client, embedder)
+    register_search(mcp, config, store.client if store else None, embedder)
 
     log.info("MCP server ready (stdio)")
     mcp.run(transport="stdio")
