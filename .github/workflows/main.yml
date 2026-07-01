@@ -55,26 +55,29 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Bootstrap initial tag if none exists
-        run: |
-          if [ -z "$(git tag -l 'v*')" ]; then
-            INIT_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-            git tag -a "v${INIT_VERSION}" -m "Release v${INIT_VERSION}" HEAD
-            git push origin "v${INIT_VERSION}"
-            echo "Created initial tag v${INIT_VERSION}"
-          fi
-
       - name: Bump version
         id: bump
         run: |
-          if uv run cz bump --yes; then
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+
+          if [ -z "$(git tag -l 'v*')" ]; then
+            # First run: no tags yet — publish the current version as the initial release
+            git tag -a "v${VERSION}" -m "Release v${VERSION}" HEAD
+            git push origin "v${VERSION}"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          elif uv run cz bump --yes; then
             VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "bumped=true" >> "$GITHUB_OUTPUT"
           else
             EXIT=$?
-            # Exit code 21 = NoneIncrement: no releasable commits, skip silently
-            [ $EXIT -eq 21 ] && echo "bumped=false" >> "$GITHUB_OUTPUT" || exit $EXIT
+            # 21 = NoneIncrement, 3 = NO_COMMITS_FOUND — both mean nothing to release
+            if [ $EXIT -eq 21 ] || [ $EXIT -eq 3 ]; then
+              echo "bumped=false" >> "$GITHUB_OUTPUT"
+            else
+              exit $EXIT
+            fi
           fi
 
       - name: Push bump commit and tag
