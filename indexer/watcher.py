@@ -36,8 +36,6 @@ class VaultHandler(FileSystemEventHandler):
             new = str(Path(event.dest_path).relative_to(self.vault_path))
             self.store.move_note_chunks(old, new)
         elif src_md:
-            self.store.delete_note_chunks(
-                str(Path(event.src_path).relative_to(self.vault_path))
-            )
+            self.store.delete_note_chunks(str(Path(event.src_path).relative_to(self.vault_path)))
         elif dst_md:
             self.store.index_file(Path(event.dest_path), self.vault_path)

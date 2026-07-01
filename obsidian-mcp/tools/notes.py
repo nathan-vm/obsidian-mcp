@@ -3,7 +3,6 @@ import re
 import shutil
 
 import frontmatter
-
 from utils import safe_path
 
 

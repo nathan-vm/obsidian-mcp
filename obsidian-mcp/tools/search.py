@@ -79,11 +79,13 @@ def register(mcp, config, client: QdrantClient | None, embedder):
                     start = max(0, pos - 100)
                     end = min(len(text), pos + 100)
                     snippets.append(text[start:end].replace("\n", " ").strip())
-                results.append({
-                    "path": str(p.relative_to(vault)),
-                    "match_count": len(matches),
-                    "snippets": snippets,
-                })
+                results.append(
+                    {
+                        "path": str(p.relative_to(vault)),
+                        "match_count": len(matches),
+                        "snippets": snippets,
+                    }
+                )
         return sorted(results, key=lambda r: r["match_count"], reverse=True)
 
     def _fallback_search(query: str, n: int) -> list[dict]:

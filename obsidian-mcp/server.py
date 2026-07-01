@@ -6,18 +6,18 @@ from pathlib import Path
 
 # Make shared/ and indexer/ importable from the repo root
 _ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(Path(__file__).parent))   # obsidian-mcp/
-sys.path.insert(0, str(_ROOT))                    # repo root (shared/)
-sys.path.insert(0, str(_ROOT / "indexer"))        # indexer/
+sys.path.insert(0, str(Path(__file__).parent))  # obsidian-mcp/
+sys.path.insert(0, str(_ROOT))  # repo root (shared/)
+sys.path.insert(0, str(_ROOT / "indexer"))  # indexer/
 
 from mcp.server.fastmcp import FastMCP
+from runner import run_indexer
+from store import QdrantStore
+from tools.notes import register as register_notes
+from tools.search import register as register_search
 
 from shared.config import config
 from shared.embedding import FastEmbedder
-from store import QdrantStore
-from runner import run_indexer
-from tools.notes import register as register_notes
-from tools.search import register as register_search
 
 # Logs must go to stderr — stdout is reserved for MCP stdio transport
 logging.basicConfig(

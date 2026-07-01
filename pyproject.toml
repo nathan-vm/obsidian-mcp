@@ -1,6 +1,6 @@
 [project]
 name = "obsidian-mcp"
-version = "0.2.0"
+version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "python-frontmatter>=1.1.0",
@@ -11,3 +11,42 @@ dependencies = [
     "watchdog>=4.0.0",
     "httpx>=0.27.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+    "pytest>=8.0",
+    "pip-audit>=2.7",
+    "commitizen>=3.0",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "indexer"]
+addopts = "--cov=. --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+omit = [
+    "tests/*",
+    "indexer/main.py",
+    "indexer/embedder.py",
+    "obsidian-mcp/*",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# sys.path manipulation before imports is required in these entry-point scripts
+"obsidian-mcp/server.py" = ["E402"]
+"indexer/main.py" = ["E402"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version_provider = "pep621"
+tag_format = "v$version"
+bump_message = "bump: version $current_version → $new_version [skip ci]"

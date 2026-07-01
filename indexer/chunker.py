@@ -55,7 +55,24 @@ def chunk_markdown(text: str, rel_path: str, chunk_size: int, chunk_overlap: int
         for para in paragraphs:
             words = len(para.split())
             if current_words + words > chunk_size and current:
-                chunks.append({
+                chunks.append(
+                    {
+                        "path": rel_path,
+                        "folder": folder,
+                        "folders": ancestors,
+                        "filename": filename,
+                        "heading": heading,
+                        "chunk_text": "\n\n".join(current),
+                        "tags": all_tags,
+                    }
+                )
+                current = current[-1:] if chunk_overlap > 0 else []
+                current_words = len(current[0].split()) if current else 0
+            current.append(para)
+            current_words += words
+        if current:
+            chunks.append(
+                {
                     "path": rel_path,
                     "folder": folder,
                     "folders": ancestors,
@@ -63,25 +80,19 @@ def chunk_markdown(text: str, rel_path: str, chunk_size: int, chunk_overlap: int
                     "heading": heading,
                     "chunk_text": "\n\n".join(current),
                     "tags": all_tags,
-                })
-                current = current[-1:] if chunk_overlap > 0 else []
-                current_words = len(current[0].split()) if current else 0
-            current.append(para)
-            current_words += words
-        if current:
-            chunks.append({
+                }
+            )
+
+    if not chunks:
+        chunks = [
+            {
                 "path": rel_path,
                 "folder": folder,
                 "folders": ancestors,
                 "filename": filename,
-                "heading": heading,
-                "chunk_text": "\n\n".join(current),
+                "heading": "",
+                "chunk_text": text[:2000],
                 "tags": all_tags,
-            })
-
-    if not chunks:
-        chunks = [{
-            "path": rel_path, "folder": folder, "folders": ancestors,
-            "filename": filename, "heading": "", "chunk_text": text[:2000], "tags": all_tags,
-        }]
+            }
+        ]
     return chunks

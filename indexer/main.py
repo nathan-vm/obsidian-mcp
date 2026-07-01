@@ -5,10 +5,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from shared.config import config
-from shared.embedding import FastEmbedder
 from runner import run_indexer
 from store import QdrantStore
+
+from shared.config import config
+from shared.embedding import FastEmbedder
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
