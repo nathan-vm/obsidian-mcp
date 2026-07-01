@@ -63,24 +63,44 @@ jobs:
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
 
           if [ -z "$(git tag -l 'v*')" ]; then
-            # First run: no tags yet — publish the current version as the initial release
+            # First run: no tags yet — publish current version as initial release
             git tag -a "v${VERSION}" -m "Release v${VERSION}" HEAD
             git push origin "v${VERSION}"
             echo "version=$VERSION" >> "$GITHUB_OUTPUT"
             echo "bumped=true" >> "$GITHUB_OUTPUT"
-          elif uv run cz bump --yes; then
-            VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "bumped=true" >> "$GITHUB_OUTPUT"
-          else
-            EXIT=$?
-            # 21 = NoneIncrement, 3 = NO_COMMITS_FOUND — both mean nothing to release
-            if [ $EXIT -eq 21 ] || [ $EXIT -eq 3 ]; then
-              echo "bumped=false" >> "$GITHUB_OUTPUT"
-            else
-              exit $EXIT
-            fi
+            exit 0
           fi
+
+          LAST_TAG=$(git describe --tags --abbrev=0)
+
+          # Read only commit subjects (--format=%s --first-parent) so the body of
+          # squash merges — which lists individual PR commits — is never parsed.
+          SUBJECTS=$(git log "${LAST_TAG}..HEAD" --format="%s" --first-parent)
+
+          if [ -z "$SUBJECTS" ]; then
+            echo "No commits since ${LAST_TAG} — skipping release"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Determine increment from subjects only
+          if echo "$SUBJECTS" | grep -qE "^.+(\(.+\))?!:"; then
+            INCREMENT="MAJOR"
+          elif echo "$SUBJECTS" | grep -qE "^feat(\(.+\))?:"; then
+            INCREMENT="MINOR"
+          elif echo "$SUBJECTS" | grep -qE "^(fix|perf|refactor)(\(.+\))?:"; then
+            INCREMENT="PATCH"
+          else
+            echo "No releasable commits (chore/docs/ci/style) — skipping release"
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Bumping ${INCREMENT} based on: $(echo "$SUBJECTS" | head -5)"
+          uv run cz bump --yes --increment "$INCREMENT"
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "bumped=true" >> "$GITHUB_OUTPUT"
 
       - name: Push bump commit and tag
         if: steps.bump.outputs.bumped == 'true'

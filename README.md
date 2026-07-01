@@ -38,13 +38,13 @@ The Qdrant index is stored on a Docker volume and persists across container rest
 
 ## Production
 
-### 1. Build the image
+### 1. Pull the image
 
 ```bash
-docker build -t obsidian-mcp .
+docker pull nathanvm/obsidian-mcp:latest
 ```
 
-This bakes the `nomic-ai/nomic-embed-text-v1.5` model (~270 MB) into the image so no network access is needed at runtime.
+The image includes the `nomic-ai/nomic-embed-text-v1.5` and `Qdrant/bm25` models (~670 MB total) baked in — no network access needed at runtime.
 
 ### 2. Configure your MCP client
 
@@ -56,7 +56,7 @@ claude mcp add obsidian \
   -e DATA_PATH=/data \
   -v /absolute/path/to/your/vault:/vault \
   -v obsidian-mcp-data:/data \
-  obsidian-mcp:latest
+  nathanvm/obsidian-mcp:latest
 ```
 
 **Claude Desktop / VS Code (`mcp.json`):**
@@ -72,7 +72,7 @@ claude mcp add obsidian \
         "-e", "DATA_PATH=/data",
         "-v", "/absolute/path/to/your/vault:/vault:ro",
         "-v", "obsidian-mcp-data:/data",
-        "obsidian-mcp:latest"
+        "nathanvm/obsidian-mcp:latest"
       ]
     }
   }
