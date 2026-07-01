@@ -2,9 +2,8 @@ import logging
 import time
 from pathlib import Path
 
-from watchdog.observers import Observer
-
 from store import QdrantStore
+from watchdog.observers import Observer
 from watcher import VaultHandler
 
 log = logging.getLogger(__name__)

@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  ci:
+    name: CI Gate
+    # Skip the bump commit that cz pushes back to main
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - run: uv sync --group dev
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format
+        run: uv run ruff format --check .
+
+      - name: pip-audit
+        run: uv run pip-audit
+
+      - name: pytest
+        run: uv run pytest -v
+
+  release:
+    name: Bump & Publish
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - run: uv sync --group dev
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Bootstrap initial tag if none exists
+        run: |
+          if [ -z "$(git tag -l 'v*')" ]; then
+            INIT_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+            git tag -a "v${INIT_VERSION}" -m "Release v${INIT_VERSION}" HEAD
+            git push origin "v${INIT_VERSION}"
+            echo "Created initial tag v${INIT_VERSION}"
+          fi
+
+      - name: Bump version
+        id: bump
+        run: |
+          if uv run cz bump --yes; then
+            VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+          else
+            EXIT=$?
+            # Exit code 21 = NoneIncrement: no releasable commits, skip silently
+            [ $EXIT -eq 21 ] && echo "bumped=false" >> "$GITHUB_OUTPUT" || exit $EXIT
+          fi
+
+      - name: Push bump commit and tag
+        if: steps.bump.outputs.bumped == 'true'
+        run: git push origin main --follow-tags
+
+      - name: Set up Docker Buildx
+        if: steps.bump.outputs.bumped == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DockerHub
+        if: steps.bump.outputs.bumped == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        if: steps.bump.outputs.bumped == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/obsidian-mcp:${{ steps.bump.outputs.version }}
+            ${{ vars.DOCKERHUB_USERNAME }}/obsidian-mcp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

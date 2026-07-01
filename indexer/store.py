@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 
+from chunker import chunk_id, chunk_markdown
 from fastembed import SparseTextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -8,8 +9,6 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
-    NamedSparseVector,
-    NamedVector,
     PointIdsList,
     PointStruct,
     SparseIndexParams,
@@ -17,8 +16,6 @@ from qdrant_client.models import (
     SparseVectorParams,
     VectorParams,
 )
-
-from chunker import chunk_id, chunk_markdown
 
 log = logging.getLogger(__name__)
 
@@ -80,9 +77,7 @@ class QdrantStore:
         self.client.create_collection(
             collection_name=self.collection,
             vectors_config={DENSE_NAME: VectorParams(size=dim, distance=Distance.COSINE)},
-            sparse_vectors_config={
-                SPARSE_NAME: SparseVectorParams(index=SparseIndexParams(on_disk=False))
-            },
+            sparse_vectors_config={SPARSE_NAME: SparseVectorParams(index=SparseIndexParams(on_disk=False))},
         )
         for field in _INDEXED_FIELDS:
             self.client.create_payload_index(
@@ -97,9 +92,7 @@ class QdrantStore:
         try:
             self.client.delete(
                 collection_name=self.collection,
-                points_selector=Filter(
-                    must=[FieldCondition(key="path", match=MatchValue(value=rel_path))]
-                ),
+                points_selector=Filter(must=[FieldCondition(key="path", match=MatchValue(value=rel_path))]),
             )
         except Exception:
             pass
@@ -109,9 +102,7 @@ class QdrantStore:
         try:
             results, _ = self.client.scroll(
                 collection_name=self.collection,
-                scroll_filter=Filter(
-                    must=[FieldCondition(key="path", match=MatchValue(value=old_rel))]
-                ),
+                scroll_filter=Filter(must=[FieldCondition(key="path", match=MatchValue(value=old_rel))]),
                 with_vectors=True,
                 with_payload=True,
                 limit=1000,
@@ -124,9 +115,7 @@ class QdrantStore:
             for i, point in enumerate(results):
                 new_payload = dict(point.payload)
                 new_payload["path"] = new_rel
-                new_points.append(
-                    PointStruct(id=chunk_id(new_rel, i), vector=point.vector, payload=new_payload)
-                )
+                new_points.append(PointStruct(id=chunk_id(new_rel, i), vector=point.vector, payload=new_payload))
 
             self.client.delete(
                 collection_name=self.collection,
@@ -149,11 +138,13 @@ class QdrantStore:
                 context = f"{chunk['path']}\n{chunk['heading']}\n\n{chunk['chunk_text']}"
                 dense = self.embedder.embed_query(context)
                 sparse = self._bm25_vector(context)
-                points.append(PointStruct(
-                    id=chunk_id(rel, i),
-                    vector={DENSE_NAME: dense, SPARSE_NAME: sparse},
-                    payload=chunk,
-                ))
+                points.append(
+                    PointStruct(
+                        id=chunk_id(rel, i),
+                        vector={DENSE_NAME: dense, SPARSE_NAME: sparse},
+                        payload=chunk,
+                    )
+                )
             self.delete_note_chunks(rel)
             if points:
                 self.client.upsert(collection_name=self.collection, points=points)
