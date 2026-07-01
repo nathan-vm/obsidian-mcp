@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 
@@ -46,7 +47,9 @@ def register(mcp, config):
         """
         p = safe_path(vault, path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, p)
         return f"Written: {path}"
 
     @mcp.tool()
@@ -62,7 +65,9 @@ def register(mcp, config):
         if p.exists() and not overwrite:
             raise FileExistsError(f"{path} already exists — use overwrite=True to replace it")
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, p)
         return f"Created: {path}"
 
     @mcp.tool()
