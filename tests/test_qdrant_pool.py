@@ -1,6 +1,3 @@
-import time
-from contextlib import contextmanager
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +8,7 @@ from shared.qdrant_pool import QdrantPool
 class TestQdrantPool:
     def test_session_opens_and_closes_client(self, tmp_path):
         mock_client = MagicMock()
-        with patch("shared.qdrant_pool.QdrantClient", return_value=mock_client) as mock_cls:
+        with patch("shared.qdrant_pool.QdrantClient", return_value=mock_client):
             pool = QdrantPool(path=tmp_path / "qdrant")
             with pool.session() as client:
                 assert client is mock_client
@@ -22,7 +19,7 @@ class TestQdrantPool:
         with patch("shared.qdrant_pool.QdrantClient", return_value=mock_client):
             pool = QdrantPool(path=tmp_path / "qdrant")
             with pytest.raises(ValueError):
-                with pool.session() as client:
+                with pool.session() as _client:
                     raise ValueError("boom")
             mock_client.close.assert_called_once()
 
@@ -65,5 +62,5 @@ class TestQdrantPool:
 
     def test_creates_directory(self, tmp_path):
         pool_path = tmp_path / "nested" / "qdrant"
-        pool = QdrantPool(path=pool_path)
+        QdrantPool(path=pool_path)
         assert pool_path.exists()

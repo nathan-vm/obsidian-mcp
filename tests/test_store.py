@@ -1,4 +1,3 @@
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from tests.conftest import make_mock_bm25, make_mock_client, make_mock_pool
@@ -27,7 +26,6 @@ def _make_store(tmp_path, client, embedder, bm25=None):
 
 class TestInit:
     def test_pool_created_with_path(self, tmp_path, mock_embedder):
-        client = make_mock_client()
         qdrant_path = tmp_path / "qdrant"
         with (
             patch("store.QdrantPool") as mock_pool_cls,
