@@ -91,9 +91,20 @@ class TestPositiveFloat:
 
 class TestLoadConfig:
     def test_defaults(self):
-        env = {k: v for k, v in os.environ.items()
-               if k not in {"VAULT_PATH", "DATA_PATH", "EMBEDDING_MODEL",
-                            "COLLECTION_NAME", "CHUNK_SIZE", "CHUNK_OVERLAP", "OBSERVER_INTERVAL"}}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k
+            not in {
+                "VAULT_PATH",
+                "DATA_PATH",
+                "EMBEDDING_MODEL",
+                "COLLECTION_NAME",
+                "CHUNK_SIZE",
+                "CHUNK_OVERLAP",
+                "OBSERVER_INTERVAL",
+            }
+        }
         with patch.dict(os.environ, env, clear=True):
             cfg = load_config()
         assert cfg.vault_path == Path("/vault")
@@ -103,15 +114,18 @@ class TestLoadConfig:
         assert cfg.observer_interval == 1.0
 
     def test_env_overrides(self):
-        with patch.dict(os.environ, {
-            "VAULT_PATH": "/my/vault",
-            "DATA_PATH": "/my/data",
-            "EMBEDDING_MODEL": "my-model",
-            "COLLECTION_NAME": "my_col",
-            "CHUNK_SIZE": "200",
-            "CHUNK_OVERLAP": "20",
-            "OBSERVER_INTERVAL": "0.5",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "VAULT_PATH": "/my/vault",
+                "DATA_PATH": "/my/data",
+                "EMBEDDING_MODEL": "my-model",
+                "COLLECTION_NAME": "my_col",
+                "CHUNK_SIZE": "200",
+                "CHUNK_OVERLAP": "20",
+                "OBSERVER_INTERVAL": "0.5",
+            },
+        ):
             cfg = load_config()
         assert cfg.vault_path == Path("/my/vault")
         assert cfg.chunk_size == 200

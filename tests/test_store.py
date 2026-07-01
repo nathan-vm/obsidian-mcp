@@ -1,7 +1,5 @@
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from tests.conftest import make_mock_bm25, make_mock_client
 
@@ -127,9 +125,7 @@ class TestEnsureCollection:
     def test_returns_true_when_collection_exists_but_empty(self, tmp_path, mock_embedder):
         client = make_mock_client(collections=["test_col"])
         client.get_collections.return_value.collections[0].name = "test_col"
-        client.get_collection.return_value = self._col_info(
-            sparse_vectors={"text-sparse": MagicMock()}, points_count=0
-        )
+        client.get_collection.return_value = self._col_info(sparse_vectors={"text-sparse": MagicMock()}, points_count=0)
         store = _make_store(tmp_path, client, mock_embedder)
 
         result = store.ensure_collection()
