@@ -6,11 +6,10 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     MatchValue,
-    NamedSparseVector,
-    NamedVector,
     SparseVector,
 )
 
+from shared.embedding import FastEmbedder
 from shared.qdrant_pool import QdrantPool
 
 log = logging.getLogger(__name__)
@@ -56,7 +55,7 @@ def _build_filter(tag: str, path: str, directory: str) -> Filter | None:
     return Filter(must=must) if must else None
 
 
-def register(mcp, config, pool: QdrantPool, embedder):
+def register(mcp, config, pool: QdrantPool, embedder: FastEmbedder):
     vault = config.vault_path
 
     @mcp.tool()
@@ -173,29 +172,30 @@ def register(mcp, config, pool: QdrantPool, embedder):
                 if count == 0:
                     return _fallback_search(query, n_results)
 
-                dense_hits = client.search(
+                dense_response = client.query_points(
                     collection_name=collection,
-                    query_vector=NamedVector(name=DENSE_NAME, vector=dense_vector),
+                    query=dense_vector,
+                    using=DENSE_NAME,
                     limit=fetch,
                     query_filter=filter_condition,
                     with_payload=True,
                 )
+                dense_hits = dense_response.points
 
                 try:
                     bm25_emb = next(_get_bm25().query_embed(query))
-                    sparse_hits = client.search(
+                    sparse_response = client.query_points(
                         collection_name=collection,
-                        query_vector=NamedSparseVector(
-                            name=SPARSE_NAME,
-                            vector=SparseVector(
-                                indices=bm25_emb.indices.tolist(),
-                                values=bm25_emb.values.tolist(),
-                            ),
+                        query=SparseVector(
+                            indices=bm25_emb.indices.tolist(),
+                            values=bm25_emb.values.tolist(),
                         ),
+                        using=SPARSE_NAME,
                         limit=fetch,
                         query_filter=filter_condition,
                         with_payload=True,
                     )
+                    sparse_hits = sparse_response.points
                 except Exception:
                     sparse_hits = []
         except Exception as e:
