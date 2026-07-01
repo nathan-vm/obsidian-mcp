@@ -12,8 +12,11 @@ log = logging.getLogger(__name__)
 
 def run_indexer(store: QdrantStore, vault_path: Path, observer_interval: float) -> None:
     """Full reindex then watch for changes. Designed to run in a background thread."""
-    store.ensure_collection()
-    store.full_reindex(vault_path)
+    needs_reindex = store.ensure_collection()
+    if needs_reindex:
+        store.full_reindex(vault_path)
+    else:
+        log.info("index already populated — skipping full reindex, starting watcher")
 
     handler = VaultHandler(store, vault_path)
     observer = Observer()

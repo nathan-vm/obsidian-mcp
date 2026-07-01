@@ -20,7 +20,7 @@ _bm25: SparseTextEmbedding | None = None
 def _get_bm25() -> SparseTextEmbedding:
     global _bm25
     if _bm25 is None:
-        _bm25 = SparseTextEmbedding(model_name="Qdrant/bm25")
+        _bm25 = SparseTextEmbedding(model_name="Qdrant/bm25", cache_dir="/app/models")
     return _bm25
 
 
@@ -52,7 +52,7 @@ def _build_filter(tag: str, path: str, directory: str) -> Filter | None:
     return Filter(must=must) if must else None
 
 
-def register(mcp, config, client: QdrantClient, embedder):
+def register(mcp, config, client: QdrantClient | None, embedder):
     vault = config.vault_path
     qdrant = client
 
@@ -120,6 +120,9 @@ def register(mcp, config, client: QdrantClient, embedder):
             path: Filter by exact note path (e.g. "Work/Projects/note.md")
             directory: Filter by folder or any ancestor folder (e.g. "Work/Projects")
         """
+        if qdrant is None:
+            return _fallback_search(query, n_results)
+
         collection = config.active_collection
         try:
             info = qdrant.get_collection(collection)
@@ -184,10 +187,12 @@ def register(mcp, config, client: QdrantClient, embedder):
     def indexing_status() -> dict:
         """Return how many note chunks are currently indexed in the vector database."""
         collection = config.active_collection
+        if qdrant is None:
+            return {"collection": collection, "status": "standby — indexer lock held by another container"}
         try:
             info = qdrant.get_collection(collection)
             count = getattr(info, "points_count", None) or getattr(info, "vectors_count", None) or 0
-            sparse_cfg = info.config.params.sparse_vectors_config or {}
+            sparse_cfg = getattr(info.config.params, "sparse_vectors", None) or {}
             return {
                 "collection": collection,
                 "points_indexed": count,
