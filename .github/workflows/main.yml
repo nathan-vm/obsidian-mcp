@@ -42,7 +42,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # GH_PAT needs repo scope to push commits to a protected branch.
+          # Alternative: allow github-actions[bot] to bypass branch protection in Settings → Branches.
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - uses: astral-sh/setup-uv@v4
         with:
