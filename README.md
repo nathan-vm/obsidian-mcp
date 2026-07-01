@@ -54,7 +54,7 @@ claude mcp add obsidian \
   -- docker run -i --rm \
   -e VAULT_PATH=/vault \
   -e DATA_PATH=/data \
-  -v /absolute/path/to/your/vault:/vault:ro \
+  -v /absolute/path/to/your/vault:/vault \
   -v obsidian-mcp-data:/data \
   obsidian-mcp:latest
 ```
