@@ -116,6 +116,17 @@ open(path, 'w').write(text)
 
           uv run cz bump --yes --increment "$INCREMENT"
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+
+          # cz bump only rewrites pyproject.toml's version field; uv.lock's
+          # own self-referencing version entry is left stale, so re-lock and
+          # fold that into the bump commit — moving the tag it created since
+          # amend changes the commit hash.
+          uv lock
+          if ! git diff --quiet -- uv.lock; then
+            git add uv.lock
+            git commit --amend --no-edit
+            git tag -f -a "v${VERSION}" -m "Release v${VERSION}" HEAD
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "bumped=true" >> "$GITHUB_OUTPUT"
 
