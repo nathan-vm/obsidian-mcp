@@ -105,13 +105,7 @@ jobs:
           # the last tagged version first so the bump always starts from the
           # released baseline.
           LAST_VERSION="${LAST_TAG#v}"
-          python3 -c "
-import re
-path = 'pyproject.toml'
-text = open(path).read()
-text = re.sub(r'^version = \".*\"', 'version = \"${LAST_VERSION}\"', text, count=1, flags=re.M)
-open(path, 'w').write(text)
-"
+          python3 -c "import re; p='pyproject.toml'; t=open(p).read(); t=re.sub(r'^version = \".*\"', 'version = \"${LAST_VERSION}\"', t, count=1, flags=re.M); open(p, 'w').write(t)"
           uv lock
 
           uv run cz bump --yes --increment "$INCREMENT"
