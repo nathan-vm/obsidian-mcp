@@ -5,6 +5,22 @@ import shutil
 import frontmatter
 from utils import safe_path
 
+# Hard cap on lines returned by read_note in a single call, regardless of
+# the requested limit — keeps a single huge note from blowing the context budget.
+MAX_READ_LINES = 2000
+
+
+def _prune_empty_dirs(start, vault) -> None:
+    """Remove start and its ancestors, stopping at the vault root or the first non-empty dir."""
+    current = start.resolve()
+    vault = vault.resolve()
+    while current != vault and vault in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            break
+        current = current.parent
+
 
 def register(mcp, config):
     vault = config.vault_path
@@ -28,17 +44,37 @@ def register(mcp, config):
         ]
 
     @mcp.tool()
-    def read_note(path: str) -> str:
-        """Read the full markdown content of a note.
+    def read_note(path: str, offset: int = 0, limit: int | None = None) -> dict:
+        """Read a note's markdown content, paginated by line.
+
+        Notes longer than MAX_READ_LINES are truncated even without an explicit
+        limit — check `truncated` and re-call with a larger `offset` to keep reading.
 
         Args:
             path: Path relative to the vault root (e.g. "Projects/myproject.md")
+            offset: 0-indexed line to start reading from
+            limit: Max lines to return (capped at MAX_READ_LINES)
         """
-        return safe_path(vault, path).read_text(encoding="utf-8")
+        text = safe_path(vault, path).read_text(encoding="utf-8")
+        lines = text.splitlines(keepends=True)
+        total_lines = len(lines)
+        effective_limit = min(limit, MAX_READ_LINES) if limit is not None else MAX_READ_LINES
+        selected = lines[offset : offset + effective_limit]
+        return {
+            "path": path,
+            "content": "".join(selected),
+            "total_lines": total_lines,
+            "offset": offset,
+            "returned_lines": len(selected),
+            "truncated": offset + len(selected) < total_lines,
+        }
 
     @mcp.tool()
     def write_note(path: str, content: str) -> str:
         """Write (or overwrite) a note. Creates parent directories if needed.
+
+        For small, targeted changes to an existing note, prefer update_note —
+        it avoids resending the whole note body.
 
         Args:
             path: Path relative to the vault root
@@ -52,22 +88,48 @@ def register(mcp, config):
         return f"Written: {path}"
 
     @mcp.tool()
-    def create_note(path: str, content: str = "", overwrite: bool = False) -> str:
-        """Create a new note. Raises an error if it already exists (unless overwrite=True).
+    def update_note(path: str, edits: list[dict]) -> str:
+        """Apply one or more targeted string replacements to an existing note.
+
+        Each edit is {"old_string": str, "new_string": str, "replace_all": bool (optional, default False)}.
+        old_string must match the note's current text exactly, including whitespace and
+        indentation. It must be unique within the note unless replace_all=True. Edits are
+        applied in order, each against the result of the previous one.
 
         Args:
             path: Path relative to the vault root
-            content: Initial markdown content
-            overwrite: Set True to replace an existing note
+            edits: List of edit objects, applied in order
         """
         p = safe_path(vault, path)
-        if p.exists() and not overwrite:
-            raise FileExistsError(f"{path} already exists — use overwrite=True to replace it")
-        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.exists():
+            raise FileNotFoundError(f"Note not found: {path}")
+        content = p.read_text(encoding="utf-8")
+
+        for i, edit in enumerate(edits):
+            old = edit["old_string"]
+            new = edit["new_string"]
+            replace_all = edit.get("replace_all", False)
+
+            if old == "":
+                raise ValueError(f"Edit {i}: old_string must not be empty")
+            if old == new:
+                raise ValueError(f"Edit {i}: old_string and new_string are identical")
+
+            count = content.count(old)
+            if count == 0:
+                raise ValueError(f"Edit {i}: old_string not found in note")
+            if count > 1 and not replace_all:
+                raise ValueError(
+                    f"Edit {i}: old_string matches {count} locations — "
+                    "add more surrounding context to make it unique, or set replace_all=True"
+                )
+
+            content = content.replace(old, new) if replace_all else content.replace(old, new, 1)
+
         tmp = p.with_suffix(".tmp")
         tmp.write_text(content, encoding="utf-8")
         os.replace(tmp, p)
-        return f"Created: {path}"
+        return f"Updated: {path} ({len(edits)} edit(s) applied)"
 
     @mcp.tool()
     def delete_note(path: str) -> str:
@@ -86,6 +148,9 @@ def register(mcp, config):
     def move_note(from_path: str, to_path: str) -> str:
         """Move or rename a note.
 
+        After moving, prunes the source's parent directory (and its ancestors,
+        up to the vault root) if they were left empty.
+
         Args:
             from_path: Current path relative to the vault root
             to_path: New path relative to the vault root
@@ -94,8 +159,10 @@ def register(mcp, config):
         dst = safe_path(vault, to_path)
         if not src.exists():
             raise FileNotFoundError(f"Note not found: {from_path}")
+        src_parent = src.parent
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
+        _prune_empty_dirs(src_parent, vault)
         return f"Moved: {from_path} → {to_path}"
 
     @mcp.tool()

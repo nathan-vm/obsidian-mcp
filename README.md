@@ -151,11 +151,11 @@ Each time the MCP client starts a session it spawns a fresh container. `watchmed
 | Tool | Description |
 |---|---|
 | `list_notes` | List all `.md` files in vault or a subdirectory |
-| `read_note` | Read full content of a note by relative path |
+| `read_note` | Read a note's content, paginated by line (`offset`/`limit`, capped at 2000 lines) |
 | `write_note` | Write/overwrite a note (creates parent dirs) |
-| `create_note` | Create a note, errors if it already exists unless `overwrite=True` |
+| `update_note` | Apply targeted `old_string`/`new_string` edits without rewriting the whole note |
 | `delete_note` | Permanently delete a note |
-| `move_note` | Move or rename a note |
+| `move_note` | Move or rename a note; prunes now-empty parent dirs up to the vault root |
 | `get_note_metadata` | Return frontmatter, tags, wikilinks, word count |
 
 ### Search
