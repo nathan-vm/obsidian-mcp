@@ -97,8 +97,30 @@ jobs:
           fi
 
           echo "Bumping ${INCREMENT} based on: $(echo "$SUBJECTS" | head -5)"
+
+          # pyproject.toml's version may have been hand-edited since LAST_TAG
+          # (e.g. a PR that pre-bumps it). cz bump increments from whatever is
+          # currently in pyproject.toml, so a stale/ahead value here would
+          # double-bump past what INCREMENT computed from LAST_TAG. Reset to
+          # the last tagged version first so the bump always starts from the
+          # released baseline.
+          LAST_VERSION="${LAST_TAG#v}"
+          python3 -c "import re; p='pyproject.toml'; t=open(p).read(); t=re.sub(r'^version = \".*\"', 'version = \"${LAST_VERSION}\"', t, count=1, flags=re.M); open(p, 'w').write(t)"
+          uv lock
+
           uv run cz bump --yes --increment "$INCREMENT"
           VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+
+          # cz bump only rewrites pyproject.toml's version field; uv.lock's
+          # own self-referencing version entry is left stale, so re-lock and
+          # fold that into the bump commit — moving the tag it created since
+          # amend changes the commit hash.
+          uv lock
+          if ! git diff --quiet -- uv.lock; then
+            git add uv.lock
+            git commit --amend --no-edit
+            git tag -f -a "v${VERSION}" -m "Release v${VERSION}" HEAD
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "bumped=true" >> "$GITHUB_OUTPUT"
 
